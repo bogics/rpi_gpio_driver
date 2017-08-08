@@ -1,0 +1,22 @@
+// Definitions for test_gpio module
+/dts-v1/;
+/plugin/;
+
+/ {
+	compatible = "brcm,bcm2708";
+
+	fragment@0 {
+		target = <&soc>;
+		__overlay__ {
+			#address-cells = <1>;
+			#size-cells = <1>;
+		
+			test_gpio: test_gpio@7e200000 {
+				compatible = "test_gpio";
+				reg = <0x7e200000 0xa0>;
+				status = "okay";
+			};
+		};
+	};
+
+};
