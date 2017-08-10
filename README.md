@@ -44,6 +44,15 @@ To set GPIO 17 to output low:
 To set pin as `input`, write `pin number` and `in` to the `device file`:  
 `# echo "26 in" > /dev/test_gpio-20200000`  
 
+To set interrupt for pin on `rising` egde, write `pin number` and `rising` to the `device file`:  
+`# echo "26 rising" > /dev/test_gpio-20200000`  
+
+To set interrupt for pin on `falling` egde, write `pin number` and `falling` to the `device file`:  
+`# echo "26 falling" > /dev/test_gpio-20200000`
+
+To disable interrupt for pin , write `pin number` and `none` to the `device file`:  
+`# echo "26 none" > /dev/test_gpio-20200000`
+
 `Read` from `device file` to get direction and value of all pins which direction is input or output:
 ```
 # cat /dev/test_gpio-20200000 
@@ -65,6 +74,15 @@ To set pin as `output`, write `high` or `low` value to the corresponding `sysfs 
 
 To set pin as `input`, write `in` to the corresponding `sysfs file`:  
 `# echo in > /sys/devices/platform/soc/20200000.test_gpio/testgpio26`  
+
+To set interrupt for pin on `rising` egde, write `rising` to the corresponding `sysfs file`:  
+`# echo rising > /sys/devices/platform/soc/20200000.test_gpio/testgpio26`  
+
+To set interrupt for pin on `falling` egde, write `falling` to the corresponding `sysfs file`:  
+`# echo falling > /sys/devices/platform/soc/20200000.test_gpio/testgpio26`  
+
+To disable interrupt for pin , write `none` to the corresponding `sysfs file`:  
+`# echo none > /sys/devices/platform/soc/20200000.test_gpio/testgpio26`  
 
 To `read` value of some pin, read corresponding `sysfs file`:  
 ```
