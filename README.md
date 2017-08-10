@@ -1,4 +1,4 @@
-## Raspberry Pi GPIO kernel driver for Raspberry Pi.
+## GPIO kernel driver for Raspberry Pi.
 
 Check the [Wiki](https://github.com/bogics/rpi_gpio_module/wiki) pages for details about  
 - [Raspberry Pi Hardware](https://github.com/bogics/rpi_gpio_driver/wiki/Raspberry-Pi-Hardware)  
