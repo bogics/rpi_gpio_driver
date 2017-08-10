@@ -10,6 +10,8 @@
 #include <linux/uaccess.h>
 #include <linux/slab.h>
 #include <linux/sysfs.h>
+#include <linux/interrupt.h>
+
 
 #define NUM_GPIOS 54
 
@@ -18,42 +20,88 @@ static int gpio[NUM_GPIOS];
 static int gpio_argc = 0;
 module_param_array(gpio, int, &gpio_argc, 0644);
 
-/* GPIO register offsets */
 
-/* there are 5 GPFSEL 32bit registers, starting from offset 0x00.
- * Every register controls 10 pins, 3 bits per pin, so the last two bits are unused (reserved).
+/* GPIO Function Select Registers
+ *
+ * 5 GPFSEL 32-bit registers, starting from offset 0x00.
+ * Every register controls 10 pins, 3 bits per pin, so the last two bits are unused (reserved):
  * 000 - GPIO pin is input
  * 001 - GPIO pin is otput
  * xxx - for other combinations, GPIO pin takes some alternate function */
-#define GPFSEL		0x0		/* Function Select */
+#define GPFSEL		0x0
+#define GET_GPFSEL_REG_OFFSET(pin)		(GPFSEL + (((pin) / 10) * 4))
+#define GET_GPFSEL_PIN_OFFSET(pin)		(((pin) % 10) * 3)
 
-/* there are 2 GPSET 32bit registers, starting from offset 0x1c.
- * Every register controls 32 pins, 1 bit per pin.
+
+/* GPIO Pin Output Set Registers
+ *
+ * 2 GPSET 32-bit registers, starting from offset 0x1c.
+ * Every register controls 32 pins, 1 bit per pin:
  * 0 - no effect
  * 1 - Set GPIO pin */
-#define GPSET		0x1c	/* Pin Output Set */
+#define GPSET		0x1c
+#define GET_GPSET_REG_OFFSET(pin)		(GPSET + (((pin) / 32) * 4))
+#define GET_GPSET_PIN_OFFSET(pin)		(pin)
 
-/* there are 2 GPCLR 32bit registers, starting from offset 0x28.
- * Every register controls 32 pins, 1 bit per pin.
+
+/* GPIO Pin Output Clear Registers
+ *
+ * 2 GPCLR 32-bit registers, starting from offset 0x28.
+ * Every register controls 32 pins, 1 bit per pin:
  * 0 - no effect
  * 1 - Clear GPIO pin */
-#define GPCLR		0x28	/* Pin Output Clear */
+#define GPCLR		0x28
+#define GET_GPCLR_REG_OFFSET(pin)		(GPCLR + (((pin) / 32) * 4))
+#define GET_GPCLR_PIN_OFFSET(pin)		(pin)
 
-/* there are 2 GPCLR 32bit registers, starting from offset 0x34.
- * Every register controls 32 pins, 1 bit per pin.
+
+/* GPIO Pin Level Registers
+ *
+ * 2 GPLEV 32-bit registers, starting from offset 0x34.
+ * Every register controls 32 pins, 1 bit per pin:
  * 0 - GPIO pin is low
  * 1 - GPIO pin is high */
-#define GPLEV		0x34	/* Pin Level */
-
-#define GET_GPFSEL_REG_OFFSET(pin)		(GPFSEL + (((pin) / 10) * 4))
-#define GET_GPSET_REG_OFFSET(pin)		(GPSET + (((pin) / 32) * 4))
-#define GET_GPCLR_REG_OFFSET(pin)		(GPCLR + (((pin) / 32) * 4))
+#define GPLEV		0x34
 #define GET_GPLEV_REG_OFFSET(pin)		(GPLEV + (((pin) / 32) * 4))
-
-#define GET_GPFSEL_PIN_OFFSET(pin)		(((pin) % 10) * 3)
-#define GET_GPSET_PIN_OFFSET(pin)		(pin)
-#define GET_GPCLR_PIN_OFFSET(pin)		(pin)
 #define GET_GPLEV_PIN_OFFSET(pin)		(pin)
+
+
+/* GPIO Event Detect Status Registers
+ *
+ * 2 GPEDS 32-bit registers, starting from offset 0x40
+ * Every register controls 32 pins, 1 bit per pin.
+ * The relevant bit in the event detect status registers is set whenever:
+ *   1) an edge is detected that matches the type of edge programmed in the rising/falling
+ *      edge detect enable registers
+ *   2) a level is detected that matches the type of level programmed in the high/low
+ *      level detect enable registers.
+ * The bit is cleared by writing a “1” to the relevant bit. */
+#define GPEDS		0x40
+#define GET_GPEDS_REG_OFFSET(pin)		(GPEDS + (((pin) / 32) * 4))
+#define GET_GPEDS_PIN_OFFSET(pin)		(pin)
+
+
+/* GPIO Rising Edge Detect Enable Registers
+ *
+ * 2 GPREN 32-bit registers, starting from offset 0x4C
+ * Every register controls 32 pins, 1 bit per pin:
+ * 0 - Rising edge detect disabled
+ * 1 - Rising edge sets corresponding bit in GPEDS */
+#define GPREN		0x4C
+#define GET_GPREN_REG_OFFSET(pin)		(GPREN + (((pin) / 32) * 4))
+#define GET_GPREN_PIN_OFFSET(pin)		(pin)
+
+
+/* GPIO Falling Edge Detect Enable Registers
+ *
+ * 2 GPREN 32-bit registers, starting from offset 0x58
+ * Every register controls 32 pins, 1 bit per pin:
+ * 0 - Falling edge detect disabled
+ * 1 - Falling edge sets corresponding bit in GPEDS */
+#define GPFEN		0x58
+#define GET_GPFEN_REG_OFFSET(pin)		(GPFEN + (((pin) / 32) * 4))
+#define GET_GPFEN_PIN_OFFSET(pin)		(pin)
+
 
 
 enum output_level {
@@ -73,11 +121,18 @@ enum reg_fsel {
 	REG_FSEL_ALT5 = 2
 };
 
+enum edge_detect {
+	EDGE_RISING,
+	EGDE_FALLING
+};
+
+
 struct test_gpio_dev {
 	struct miscdevice miscdev;
 	void __iomem *regs;
 	struct device_attribute **dev_attr;
 	char **sysfiles;
+	int irq;
 };
 
 static ssize_t test_gpio_write(struct file *file, const char __user *buf, size_t count, loff_t * ppos);
@@ -160,6 +215,106 @@ static int set_input(struct test_gpio_dev *gpioDev, char pin) {
 
 	return 0;
 }
+
+
+static int disable_egdes(struct test_gpio_dev *gpioDev, char pin) {
+	int val, mask;
+	int reg_offset, pin_offset;
+
+	// Disable Rissing edge
+	reg_offset = GET_GPREN_REG_OFFSET(pin);
+	pin_offset = GET_GPREN_PIN_OFFSET(pin);
+
+	/* Read register value */
+	val = reg_read(gpioDev, reg_offset);
+	// clear pin in corresponding Rising register
+	mask = (0x01 << pin_offset);
+	val &= ~mask;
+	reg_write(gpioDev, val, reg_offset);
+
+
+	// Disable Falling edge
+	reg_offset = GET_GPFEN_REG_OFFSET(pin);
+	pin_offset = GET_GPFEN_PIN_OFFSET(pin);
+
+	/* Read register value */
+	val = reg_read(gpioDev, reg_offset);
+	// clear pin in corresponding Falling register
+	mask = (0x01 << pin_offset);
+	val &= ~mask;
+	reg_write(gpioDev, val, reg_offset);
+
+	return 0;
+}
+
+static int enable_egde(struct test_gpio_dev *gpioDev, char pin, int edge) {
+	int val, mask;
+	int reg_offset, pin_offset;
+
+	disable_egdes(gpioDev, pin);
+	set_input(gpioDev, pin);
+
+	switch (edge) {
+	case EDGE_RISING:
+		reg_offset = GET_GPREN_REG_OFFSET(pin);
+		pin_offset = GET_GPREN_PIN_OFFSET(pin);
+		break;
+
+	case EGDE_FALLING:
+		reg_offset = GET_GPFEN_REG_OFFSET(pin);
+		pin_offset = GET_GPFEN_PIN_OFFSET(pin);
+		break;
+
+	default:
+		printk(KERN_ALERT "\n[%s][%d] ERROR: Invalid argument!\n", __FUNCTION__, __LINE__);
+		//TODO: Handle this error
+	}
+
+	/* Read register value */
+	val = reg_read(gpioDev, reg_offset);
+	// Set pin in corresponding Rising/Falling register
+	mask = (0x01 << pin_offset);
+	val |= mask;
+	reg_write(gpioDev, val, reg_offset);
+
+	return 0;
+}
+
+static int acknowledge_int(struct test_gpio_dev *gpioDev) {
+	int val, orig_val, mask;
+	int reg_offset = GPEDS;
+	int pin = 0, i;
+
+	/* Read register value */
+	val = reg_read(gpioDev, reg_offset);
+//	pr_info("\n     val 1: 0x%x\n", val);
+	orig_val = val;
+	if (val == 0) {
+		reg_offset += 0x04;
+		val = reg_read(gpioDev, reg_offset);
+		//pr_info("\n     val 2: 0x%x\n", val);
+		pin += 32;
+	}
+
+	for (i = 0; i < 32; i++) {
+		if (i != 0)
+		   val >>= 1;
+		if (val == 1)
+			break;
+	}
+	pin += i;
+//	pr_info("\npin: %d\n", pin);
+
+	if (pin < 64) {
+		mask = (0x01 << i);
+		orig_val |= mask;
+		reg_write(gpioDev, orig_val, reg_offset);
+	}
+
+	return pin;
+}
+
+
 
 static ssize_t test_gpio_read(struct file *file, char __user *buf, size_t count, loff_t * ppos)
 {
@@ -271,6 +426,15 @@ static ssize_t test_gpio_write(struct file *file, const char __user *buf, size_t
 	else if (strcmp(cmd, "in") == 0) {
 		set_input(gpioDev, pin);
 	}
+	else if (strcmp(cmd, "rising") == 0) {
+		enable_egde(gpioDev, pin, EDGE_RISING);
+	}
+	else if (strcmp(cmd, "falling") == 0) {
+		enable_egde(gpioDev, pin, EGDE_FALLING);
+	}
+	else if (strcmp(cmd, "none") == 0) {
+		disable_egdes(gpioDev, pin);
+	}
 	else {
 		printk(KERN_ALERT "\nERROR: Invalid command!\n");
 		err = count;
@@ -352,14 +516,23 @@ static ssize_t test_gpio_store(struct device *dev, struct device_attribute *attr
 
 	pin = get_pin_nb(attr);
 
-	if (strncmp(buf, "high", 4) == 0) {
+	if (strncmp(buf, "high", strlen("high")) == 0) {
 		set_output(gpioDev, pin, OUTPUT_HIGH);
 	}
-	else if (strncmp(buf, "low", 3) == 0) {
+	else if (strncmp(buf, "low", strlen("low")) == 0) {
 		set_output(gpioDev, pin, OUTPUT_LOW);
 	}
-	else if (strncmp(buf, "in", 2) == 0) {
+	else if (strncmp(buf, "in", strlen("in")) == 0) {
 		set_input(gpioDev, pin);
+	}
+	else if (strncmp(buf, "rising", strlen("rising")) == 0) {
+		enable_egde(gpioDev, pin, EDGE_RISING);
+	}
+	else if (strncmp(buf, "falling", strlen("falling")) == 0) {
+		enable_egde(gpioDev, pin, EGDE_FALLING);
+	}
+	else if (strncmp(buf, "none", strlen("none")) == 0) {
+		disable_egdes(gpioDev, pin);
 	}
 	else {
 		printk(KERN_ALERT "\nERROR: Invalid command: %s\n", buf);
@@ -377,13 +550,44 @@ static struct of_device_id test_gpio_dt_match[] = {
 MODULE_DEVICE_TABLE(of, test_gpio_dt_match);
 #endif
 
+static irqreturn_t test_gpio_interrupt(int irq, void *dev)
+{
+	int ret = IRQ_HANDLED;
+	int pin;
+	struct test_gpio_dev *gpioDev = (struct test_gpio_dev *)dev;
+
+	pin = acknowledge_int(gpioDev);
+	//pin=64: both GPEDS0 and GPEDS1 are zeros of all bits!!
+	if (pin < 64)
+		pr_info("\nEnter test_gpio_interrupt: %s, pin: %d\n", gpioDev->miscdev.name, pin);
+
+	return ret;
+}
+
+static int test_gpio_remove(struct platform_device *pdev)
+{
+	int i;
+	struct test_gpio_dev *gpioDev = platform_get_drvdata(pdev);
+
+	for (i = 0; i < gpio_argc; i++) {
+//		pr_info("device_remove_file: %s\n", gpioDev->dev_attr[i]->attr.name);
+		device_remove_file(&pdev->dev, gpioDev->dev_attr[i]);
+	}
+
+	misc_deregister(&gpioDev->miscdev);
+
+
+	return 0;
+}
+
 static int test_gpio_probe(struct platform_device *pdev)
 {
 	const struct of_device_id *match;
 	struct resource *regs;
 	struct test_gpio_dev *gpioDev;
-	int err, i;
+	int err = 0, i;
 	char name[20];
+	int irq;
 
 	/* The first operation is a sanity check, verifying that the probe was called on a device that is relevant.
 	 * This is probably not really necessary, but this check appears in many drivers. */
@@ -507,6 +711,40 @@ static int test_gpio_probe(struct platform_device *pdev)
 
 
 
+	/*  device tree:
+	 *      interrupts = <2 19>;
+	 *
+	 *  platform_get_irq:
+	 *      struct resource *r;
+	 *      r = platform_get_resource(dev, IORESOURCE_IRQ, num);
+	 *      return r->start;
+	 *
+	 * it returns IRQ number index (r->start)
+	 */
+	irq = platform_get_irq(pdev, 0);
+	if (irq < 0) {
+		dev_err(&pdev->dev, "could not get IRQ\n");
+		return irq;
+	}
+//	pr_info("\nIRQ number index: %d\n", irq);
+
+	/* Register interrupt handler */
+	err = request_irq(irq, test_gpio_interrupt, IRQF_SHARED, dev_name(&pdev->dev), gpioDev);
+	if (err) {
+		dev_err(&pdev->dev, "could not request IRQ: %d\n", err);
+		goto out_irq_error;
+	}
+
+	/* Then, pass the interrupt number to devm_request_irq() along with the interrupt handler to
+	register your interrupt in the kernel. */
+	err = devm_request_irq(&pdev->dev, irq, test_gpio_interrupt, IRQF_SHARED, "test_gpio_int", gpioDev);
+	if (err) {
+		dev_err(&pdev->dev, "devm_request_irq error: %d\n", err);
+		goto out_irq_error;
+	}
+
+	gpioDev->irq = irq;
+
 	/* SUMMARY:
  * In device tree (bcm2708_common.dtsi), "test_gpio" node is defined as child node of the "soc".
  * "test_gpio" has reg property (refers to a range of units in a register space):
@@ -523,24 +761,13 @@ static int test_gpio_probe(struct platform_device *pdev)
  * Physical address needs to be translated to VIRTUAL ADDRESS IN KERNEL MODE 0xf2200000 using devm_ioremap()
  */
 
-	return 0;
+	return err;
+
+	out_irq_error:
+		test_gpio_remove(pdev);
+		return err;
 }
 
-static int test_gpio_remove(struct platform_device *pdev)
-{
-	int i;
-	struct test_gpio_dev *gpioDev = platform_get_drvdata(pdev);
-
-	for (i = 0; i < gpio_argc; i++) {
-//		pr_info("device_remove_file: %s\n", gpioDev->dev_attr[i]->attr.name);
-		device_remove_file(&pdev->dev, gpioDev->dev_attr[i]);
-	}
-
-	misc_deregister(&gpioDev->miscdev);
-
-	
-	return 0;
-}
 
 
 static struct platform_driver test_gpio_driver = {

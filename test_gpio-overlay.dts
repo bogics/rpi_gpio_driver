@@ -14,6 +14,9 @@
 			test_gpio: test_gpio@7e200000 {
 				compatible = "test_gpio";
 				reg = <0x7e200000 0xa0>;
+				interrupts = <2 17>;
+				interrupt-controller;
+				#interrupt-cells = <2>;
 				status = "okay";
 			};
 		};
