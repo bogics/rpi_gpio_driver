@@ -29,8 +29,8 @@ e.g.:
 &nbsp;  
 
 **Direction** of GPIO pin can be **input** or **output**.  
-GPIO pin is set as **output** by writting **high** or **low**.  
-GPIO pin is set as **input** by default, or by writting **in**.  
+**output** GPIO pin can be set to **high** or **low** state.  
+GPIO pin can be set to generate interrupt on **rising** or **falling** edge. 
 
 &nbsp;  
 ### Access via device file
