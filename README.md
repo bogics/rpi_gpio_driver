@@ -1,9 +1,9 @@
 ## Raspberry Pi GPIO kernel driver for Raspberry Pi.
 
 Check the [Wiki](https://github.com/bogics/rpi_gpio_module/wiki) pages for details about  
-- [Raspberry Pi Hardware](https://github.com/bogics/rpi_gpio_module/wiki/Raspberry-Pi-Hardware)  
-- [Device Tree](https://github.com/bogics/rpi_gpio_module/wiki/Device-Tree)  
-- [Software Implementation](https://github.com/bogics/rpi_gpio_module/wiki/Software-Implementation)  
+- [Raspberry Pi Hardware](https://github.com/bogics/rpi_gpio_driver/wiki/Raspberry-Pi-Hardware)  
+- [Device Tree](https://github.com/bogics/rpi_gpio_driver/wiki/Device-Tree)  
+- [Software Implementation](https://github.com/bogics/rpi_gpio_driver/wiki/Software-Implementation)  
 
 &nbsp;  
 **Userspace** access to GPIO Device Driver can be obrained via **char device file** or **sysfs entries**.
@@ -29,8 +29,8 @@ e.g.:
 &nbsp;  
 
 **Direction** of GPIO pin can be **input** or **output**.  
-GPIO pin is set as **output** by writting **high** or **low**.  
-GPIO pin is set as **input** by default, or by writting **in**.  
+**output** GPIO pin can be set to **high** or **low** state.  
+GPIO pin can be set to generate interrupt on **rising** or **falling** edge. 
 
 &nbsp;  
 ### Access via device file
@@ -43,6 +43,15 @@ To set GPIO 17 to output low:
 ```
 To set pin as `input`, write `pin number` and `in` to the `device file`:  
 `# echo "26 in" > /dev/test_gpio-20200000`  
+
+To set interrupt for pin on `rising` egde, write `pin number` and `rising` to the `device file`:  
+`# echo "26 rising" > /dev/test_gpio-20200000`  
+
+To set interrupt for pin on `falling` egde, write `pin number` and `falling` to the `device file`:  
+`# echo "26 falling" > /dev/test_gpio-20200000`
+
+To disable interrupt for pin , write `pin number` and `none` to the `device file`:  
+`# echo "26 none" > /dev/test_gpio-20200000`
 
 `Read` from `device file` to get direction and value of all pins which direction is input or output:
 ```
@@ -65,6 +74,15 @@ To set pin as `output`, write `high` or `low` value to the corresponding `sysfs 
 
 To set pin as `input`, write `in` to the corresponding `sysfs file`:  
 `# echo in > /sys/devices/platform/soc/20200000.test_gpio/testgpio26`  
+
+To set interrupt for pin on `rising` egde, write `rising` to the corresponding `sysfs file`:  
+`# echo rising > /sys/devices/platform/soc/20200000.test_gpio/testgpio26`  
+
+To set interrupt for pin on `falling` egde, write `falling` to the corresponding `sysfs file`:  
+`# echo falling > /sys/devices/platform/soc/20200000.test_gpio/testgpio26`  
+
+To disable interrupt for pin , write `none` to the corresponding `sysfs file`:  
+`# echo none > /sys/devices/platform/soc/20200000.test_gpio/testgpio26`  
 
 To `read` value of some pin, read corresponding `sysfs file`:  
 ```
